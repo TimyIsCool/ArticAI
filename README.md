@@ -61,6 +61,9 @@ First, make sure that you have the following installed on your machine:
 1. Start the development server by running `npm run dev`.
 1. Visit [http://localhost:3000](http://localhost:3000).
 
+https://min.io/download#/docker
+https://github.com/maildev/maildev
+
 ### Important Scripts
 ```sh
 docker-compose up -d # Spin up db and redis
