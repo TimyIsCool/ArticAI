@@ -64,6 +64,10 @@ First, make sure that you have the following installed on your machine:
 https://min.io/download#/docker
 https://github.com/maildev/maildev
 
+```
+docker run -p 9000:9000 -p 9001:9001 minio/minio server /data --console-address ":9001" -v F:/Docker/Data:/data
+```
+
 ### Important Scripts
 ```sh
 docker-compose up -d # Spin up db and redis
