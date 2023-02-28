@@ -65,7 +65,7 @@ https://min.io/download#/docker
 https://github.com/maildev/maildev
 
 ```
-docker run -p 9000:9000 -p 9001:9001 minio/minio server /data --console-address ":9001" -v F:/Docker/Data:/data
+docker run -v F:/Docker/Data:/data -p 9000:9000 -p 9001:9001 minio/minio server /data --console-address ":9001" 
 ```
 
 ### Important Scripts
