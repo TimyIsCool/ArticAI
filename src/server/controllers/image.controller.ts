@@ -1,7 +1,19 @@
+import {
+  GetImageInput,
+  GetInfiniteImagesInput,
+  ImageModerationSchema,
+} from './../schema/image.schema';
+import {
+  getAllImages,
+  getImage,
+  getImageDetail,
+  getImageResources,
+  moderateImages,
+} from './../services/image.service';
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetModelVersionImagesSchema,
@@ -9,6 +21,7 @@ import {
   GetGalleryImageInput,
   GetImageConnectionsSchema,
   ImageUpdateSchema,
+  UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
 import {
@@ -19,6 +32,7 @@ import {
   updateImageById,
   updateImageReportStatusByReason,
   getImageConnectionsById,
+  updateImage,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -60,8 +74,9 @@ export const getGalleryImageDetailHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const item = await dbWrite.image.findUnique({
-      where: { id },
+    const isMod = ctx.user?.isModerator;
+    const item = await dbRead.image.findFirst({
+      where: { id, OR: isMod ? undefined : [{ needsReview: false }, { userId: ctx.user?.id }] },
       // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
       select: imageGallerySelect({ user: ctx.user }),
     });
@@ -77,7 +92,7 @@ export const getGalleryImageDetailHandler = async ({
         heartCount: stats?.heartCountAllTime,
         commentCount: stats?.commentCountAllTime,
       },
-      tags: tags.map(({ tag }) => tag),
+      tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -109,7 +124,10 @@ export const getGalleryImagesInfiniteHandler = async ({
 
     return {
       nextCursor,
-      items: items.map(({ tags, ...item }) => ({ ...item, tags: tags.map(({ tag }) => tag) })),
+      items: items.map(({ tags, ...item }) => ({
+        ...item,
+        tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
+      })),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -141,11 +159,11 @@ export const getGalleryImagesHandler = async ({
     const items = await getGalleryImages({
       ...input,
       user: ctx.user,
-      // orderBy: [{ connections: { index: 'asc' } }, { createdAt: 'desc' }], // Disabled for performance reasons
+      // orderBy: [{ connections: { index: 'asc' } }, { id: 'desc' }], // Disabled for performance reasons
     });
     const parsedItems = items.map(({ tags, ...item }) => ({
       ...item,
-      tags: tags.map(({ tag }) => tag),
+      tags: tags.map(({ tag, ...other }) => ({ ...tag, ...other })),
     }));
 
     const isOwnerOrModerator =
@@ -160,17 +178,9 @@ export const getGalleryImagesHandler = async ({
   }
 };
 
-export const updateImageHandler = async ({ input }: { input: ImageUpdateSchema }) => {
+export const moderateImageHandler = async ({ input }: { input: ImageModerationSchema }) => {
   try {
-    const { id, ...data } = input;
-    const image = await updateImageById({
-      id,
-      data,
-      select: { id: true, url: true, name: true, nsfw: true, needsReview: true },
-    });
-    if (!image) throw throwNotFoundError(`No image with id ${id}`);
-
-    return image;
+    await moderateImages(input);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -201,40 +211,41 @@ export const setTosViolationHandler = async ({
     const { id } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
-    const updatedImage = await updateImageById({
-      id,
-      data: { tosViolation: true },
+    // Get details of the image
+    const image = await dbRead.image.findFirst({
+      where: { id },
       select: {
-        id: true,
         user: { select: { id: true } },
         imagesOnModels: {
           select: { modelVersion: { select: { model: { select: { name: true } } } } },
         },
       },
     });
-    if (!updatedImage) throw throwNotFoundError(`No comment with id ${id}`);
+    if (!image) throw throwNotFoundError(`No image with id ${id}`);
 
+    // Update any TOS Violation reports
     await updateImageReportStatusByReason({
-      id: updatedImage.id,
+      id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
     });
 
     // Create notifications in the background
     createNotification({
-      userId: updatedImage.user.id,
+      userId: image.user.id,
       type: 'tos-violation',
       details: {
-        modelName: updatedImage.imagesOnModels?.modelVersion.model.name,
+        modelName: image.imagesOnModels?.modelVersion.model.name,
         entity: 'image',
       },
     }).catch((error) => {
       // Print out any errors
-      // TODO.logs: sent to logger service
       console.error(error);
     });
 
-    return updatedImage;
+    // Delete image
+    await deleteImageById({ id });
+    return image;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -257,3 +268,63 @@ export const getImageConnectionDataHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+export const updateImageHandler = async ({ input }: { input: UpdateImageInput }) => {
+  try {
+    return await updateImage({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getImageDetailHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    return await getImageDetail({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+// #region [new handlers]
+export const getInfiniteImagesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetInfiniteImagesInput;
+  ctx: Context;
+}) => {
+  try {
+    return await getAllImages({ ...input, userId: ctx.user?.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
+  try {
+    return await getImage({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export type ImageResourceModel = AsyncReturnType<typeof getImageResourcesHandler>[0];
+export const getImageResourcesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    return await getImageResources({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+// #endregion

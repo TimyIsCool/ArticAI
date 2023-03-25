@@ -6,15 +6,17 @@ import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllModelsOutput, ModelInput } from '~/server/schema/model.schema';
+import { GetAllModelsOutput, ModelInput, ModelUpsertInput } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   imageSelect,
   prepareCreateImage,
   prepareUpdateImage,
 } from '~/server/selectors/image.selector';
+import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
+import { ingestNewImages } from '~/server/services/image.service';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -26,7 +28,7 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
-  return dbWrite.model.findFirst({
+  return dbRead.model.findFirst({
     where: {
       id,
       OR: !user?.isModerator
@@ -54,8 +56,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     rating,
     favorites,
     hidden,
-    browsingMode,
     excludedTagIds,
+    excludedUserIds,
     excludedIds,
     checkpointType,
     status,
@@ -95,7 +97,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
               files: query
                 ? {
                     some: {
-                      hashes: { some: { hash: { equals: query, mode: 'insensitive' } } },
+                      hashes: { some: { hash: query } },
                     },
                   }
                 : undefined,
@@ -112,12 +114,15 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ],
     });
   }
+  if (excludedUserIds && excludedUserIds.length && !username) {
+    AND.push({ user: { id: { notIn: excludedUserIds } } });
+  }
   if (excludedTagIds && excludedTagIds.length && !username) {
     AND.push({
-      tagsOnModels: { every: { tagId: { notIn: excludedTagIds } } },
+      tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
     });
   }
-  if (excludedIds) {
+  if (excludedIds && !hidden && !username) {
     AND.push({ id: { notIn: excludedIds } });
   }
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
@@ -129,20 +134,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: TypeOr });
   }
 
-  if (canViewNsfw && !browsingMode) browsingMode = BrowsingMode.All;
-  else if (!canViewNsfw) browsingMode = BrowsingMode.SFW;
-
   const where: Prisma.ModelWhereInput = {
-    tagsOnModels:
-      tagname ?? tag
-        ? { some: { tag: { name: { equals: tagname ?? tag, mode: 'insensitive' } } } }
-        : undefined,
+    tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
-    nsfw:
-      browsingMode === BrowsingMode.All
-        ? undefined
-        : { equals: browsingMode === BrowsingMode.NSFW },
     rank: rating
       ? {
           AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
@@ -154,10 +149,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       ? { some: { userId: sessionUser?.id, type: 'Hide' } }
       : undefined,
     AND: AND.length ? AND : undefined,
-    modelVersions: baseModels?.length ? { some: { baseModel: { in: baseModels } } } : undefined,
+    modelVersions: { some: { baseModel: baseModels?.length ? { in: baseModels } : undefined } },
   };
 
-  const items = await dbWrite.model.findMany({
+  const items = await dbRead.model.findMany({
     take,
     skip,
     where,
@@ -179,7 +174,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   });
 
   if (count) {
-    const count = await dbWrite.model.count({ where });
+    const count = await dbRead.model.count({ where });
     return { items, count };
   }
 
@@ -187,7 +182,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 };
 
 export const getModelVersionsMicro = ({ id }: { id: number }) => {
-  return dbWrite.modelVersion.findMany({
+  return dbRead.modelVersion.findMany({
     where: { modelId: id },
     orderBy: { index: 'asc' },
     select: { id: true, name: true },
@@ -201,10 +196,10 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
   });
 };
 
-export const deleteModelById = ({ id }: GetByIdInput) => {
+export const deleteModelById = ({ id, userId }: GetByIdInput & { userId: number }) => {
   return dbWrite.model.update({
     where: { id },
-    data: { deletedAt: new Date(), status: 'Deleted' },
+    data: { deletedAt: new Date(), status: 'Deleted', deletedBy: userId },
   });
 };
 
@@ -212,7 +207,7 @@ export const restoreModelById = ({ id }: GetByIdInput) => {
   return dbWrite.model.update({ where: { id }, data: { deletedAt: null, status: 'Draft' } });
 };
 
-export const permaDeleteModelById = ({ id }: GetByIdInput) => {
+export const permaDeleteModelById = ({ id }: GetByIdInput & { userId: number }) => {
   return dbWrite.model.delete({ where: { id } });
 };
 
@@ -241,29 +236,81 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
   });
 };
 
+export const upsertModel = ({
+  id,
+  tagsOnModels,
+  ...data
+}: ModelUpsertInput & { userId: number }) => {
+  const select = modelWithDetailsSelect;
+
+  if (!id)
+    return dbWrite.model.create({
+      select,
+      data: {
+        ...data,
+        tagsOnModels: tagsOnModels
+          ? {
+              create: tagsOnModels.map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Model] },
+                    },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
+  else
+    return dbWrite.model.update({
+      select,
+      where: { id },
+      data: {
+        ...data,
+        tagsOnModels: tagsOnModels
+          ? {
+              deleteMany: {
+                tagId: {
+                  notIn: tagsOnModels.filter(isTag).map((x) => x.id),
+                },
+              },
+              connectOrCreate: tagsOnModels.filter(isTag).map((tag) => ({
+                where: { modelId_tagId: { tagId: tag.id, modelId: id as number } },
+                create: { tagId: tag.id },
+              })),
+              create: tagsOnModels.filter(isNotTag).map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Model] },
+                    },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
+};
+
 export const createModel = async ({
   modelVersions,
   userId,
   tagsOnModels,
   ...data
 }: ModelInput & { userId: number }) => {
-  // TODO Cleaning: Merge Add & Update + Transaction
-  // Create prisma transaction
-  // Upsert Model: separate function
-  // Upsert ModelVersions: separate function
-  // Upsert Tags: separate function
-  // Upsert Images: separate function
-  // Upsert ImagesOnModels: separate function
-  // Upsert ModelFiles: separate function
-  // 👆 Ideally the whole thing will only be this many lines
-  //    All of the logic would be in the separate functions
-
   const parsedModelVersions = prepareModelVersions(modelVersions);
   const allImagesNSFW = parsedModelVersions
     .flatMap((version) => version.images)
     .every((image) => image.nsfw);
 
-  return dbWrite.$transaction(async (tx) => {
+  const model = await dbWrite.$transaction(async (tx) => {
     if (tagsOnModels)
       await tx.tag.updateMany({
         where: {
@@ -289,7 +336,7 @@ export const createModel = async ({
             status: data.status,
             files: files.length > 0 ? { create: files } : undefined,
             images: {
-              create: images.map(({ tags = [], ...image }, index) => ({
+              create: images.map(({ ...image }, index) => ({
                 index,
                 image: {
                   create: {
@@ -299,17 +346,17 @@ export const createModel = async ({
                     generationProcess: image.meta
                       ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
                       : null,
-                    tags: {
-                      create: tags.map((tag) => ({
-                        tag: {
-                          connectOrCreate: {
-                            where: { id: tag.id },
-                            create: { ...tag, target: [TagTarget.Image] },
-                          },
-                        },
-                      })),
-                    },
-                  },
+                    // tags: {
+                    //   create: tags.map((tag) => ({
+                    //     tag: {
+                    //       connectOrCreate: {
+                    //         where: { id: tag.id },
+                    //         create: { ...tag, target: [TagTarget.Image] },
+                    //       },
+                    //     },
+                    //   })),
+                    // },
+                  } as Prisma.ImageUncheckedCreateWithoutImagesOnModelsInput,
                 },
               })),
             },
@@ -331,8 +378,13 @@ export const createModel = async ({
             }
           : undefined,
       },
+      select: { id: true },
     });
   });
+
+  await ingestNewImages({ modelId: model.id });
+
+  return model;
 };
 
 export const updateModel = async ({
@@ -415,7 +467,7 @@ export const updateModel = async ({
       data: { target: { push: TagTarget.Model } },
     });
 
-  return dbWrite.model.update({
+  const model = await dbWrite.model.update({
     where: { id },
     data: {
       ...data,
@@ -437,9 +489,9 @@ export const updateModel = async ({
               index,
               image: {
                 create: {
-                  userId,
                   ...prepareCreateImage(image),
-                },
+                  userId,
+                } as Prisma.ImageUncheckedCreateWithoutImagesOnReviewsInput,
               },
             })),
           },
@@ -504,9 +556,9 @@ export const updateModel = async ({
                   index,
                   image: {
                     create: {
-                      userId,
                       ...prepareCreateImage(image),
-                    },
+                      userId,
+                    } as Prisma.ImageUncheckedCreateWithoutImagesOnReviewsInput,
                   },
                 })),
                 update: imagesToUpdate.map(({ index, ...image }) => ({
@@ -551,5 +603,11 @@ export const updateModel = async ({
           }
         : undefined,
     },
+    select: { id: true },
   });
+
+  // Request scan for new images
+  await ingestNewImages({ modelId: model.id });
+
+  return model;
 };

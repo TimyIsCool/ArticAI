@@ -25,7 +25,12 @@ export async function getMetadata(file: File) {
     generationDetails = exif.parameters;
   }
 
-  const metadata = parseMetadata(generationDetails);
+  let metadata = {};
+  try {
+    metadata = parseMetadata(generationDetails);
+  } catch (e: any) { //eslint-disable-line
+    console.error('Error parsing metadata', e);
+  }
   const result = imageMetaSchema.safeParse(metadata);
   return result.success ? result.data : {};
 }
@@ -60,6 +65,8 @@ const decoder = new TextDecoder('utf-8');
 // #endregion
 
 // #region [parsers]
+const hashesRegex = /, Hashes:\s*({[^}]+})/;
+const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.]+):([0-9.]+)>/g;
 const automaticNameHash = /([a-zA-Z0-9_\.]+)\(([a-zA-Z0-9]+)\)/;
 const automaticSDKeyMap = new Map<string, keyof ImageMetaProps>([
@@ -68,21 +75,39 @@ const automaticSDKeyMap = new Map<string, keyof ImageMetaProps>([
   ['Sampler', 'sampler'],
   ['Steps', 'steps'],
 ]);
+const getSDKey = (key: string) => automaticSDKeyMap.get(key.trim()) ?? key.trim();
 const automaticSDParser = createMetadataParser(
   (meta: string) => meta.includes('Steps: '),
   (meta: string) => {
     const metadata: ImageMetaProps = {};
     if (!meta) return metadata;
     const metaLines = meta.split('\n');
-    const fineDetails =
-      metaLines
-        .pop()
-        ?.split(',')
-        .map((x) => x.split(':')) ?? [];
-    for (const [k, v] of fineDetails) {
-      if (!v) continue;
-      const propKey = automaticSDKeyMap.get(k.trim()) ?? k.trim();
-      metadata[propKey] = v.trim();
+
+    // Remove meta keys I wish I hadn't made... :(
+    let detailsLine = metaLines.pop();
+    for (const key of badExtensionKeys) {
+      if (!detailsLine?.includes(key)) continue;
+      detailsLine = detailsLine.split(key)[0];
+    }
+
+    // Extract Hashes
+    const hashes = detailsLine?.match(hashesRegex)?.[1];
+    if (hashes && detailsLine) {
+      metadata.hashes = JSON.parse(hashes);
+      detailsLine = detailsLine.replace(hashesRegex, '');
+    }
+
+    // Extract fine details
+    let currentKey = '';
+    const parts = detailsLine?.split(':') ?? [];
+    for (const part of parts) {
+      const priorValueEnd = part.lastIndexOf(',');
+      if (parts[parts.length - 1] === part) {
+        metadata[currentKey] = part.trim();
+      } else if (priorValueEnd !== -1) {
+        metadata[currentKey] = part.slice(0, priorValueEnd).trim();
+        currentKey = getSDKey(part.slice(priorValueEnd + 1));
+      } else currentKey = getSDKey(part);
     }
 
     // Extract prompts
@@ -101,12 +126,16 @@ const automaticSDParser = createMetadataParser(
       weight: parseFloat(weight),
     }));
 
-    if (metadata['Model'] && metadata['Model hash'])
+    if (metadata['Model'] && metadata['Model hash']) {
+      if (!metadata.hashes) metadata.hashes = {};
+      if (!metadata.hashes['model']) metadata.hashes['model'] = metadata['Model hash'] as string;
+
       resources.push({
         type: 'model',
         name: metadata['Model'] as string,
         hash: metadata['Model hash'] as string,
       });
+    }
 
     if (metadata['Hypernet'] && metadata['Hypernet strength'])
       resources.push({

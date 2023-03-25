@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { ModelType, MetricTimeframe, CheckpointType, ModelStatus } from '@prisma/client';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { deleteCookie } from 'cookies-next';
 import { immer } from 'zustand/middleware/immer';
 import { modelFilterSchema, useCookies } from '~/providers/CookiesProvider';
@@ -156,7 +156,7 @@ export function InfiniteModelsFilter() {
   const { classes } = useStyles();
   const cookies = useCookies().models;
   const user = useCurrentUser();
-  const defaultBrowsingMode = user?.showNsfw ? BrowsingMode.All : BrowsingMode.SFW;
+  const defaultBrowsingMode = user?.showNsfw ? BrowsingMode.NSFW : BrowsingMode.SFW;
   const setTypes = useFilters((state) => state.setTypes);
   const types = useFilters((state) => state.filters.types ?? cookies.types ?? []);
   const setStatus = useFilters((state) => state.setStatus);
@@ -216,7 +216,7 @@ export function InfiniteModelsFilter() {
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={0}>
-          {showNSFWToggle && (
+          {/* {showNSFWToggle && (
             <>
               <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
               <SegmentedControl
@@ -242,7 +242,7 @@ export function InfiniteModelsFilter() {
                 }}
               />
             </>
-          )}
+          )} */}
           {user?.isModerator && (
             <>
               <Divider label="Model status" labelProps={{ weight: 'bold' }} />
@@ -271,7 +271,7 @@ export function InfiniteModelsFilter() {
           >
             {Object.values(ModelType).map((type, index) => (
               <Chip key={index} value={type} {...chipProps}>
-                {splitUppercase(type)}
+                {getDisplayName(type)}
               </Chip>
             ))}
           </Chip.Group>

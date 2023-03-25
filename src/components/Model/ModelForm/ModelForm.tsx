@@ -41,7 +41,7 @@ import {
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
@@ -66,12 +66,12 @@ import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ModelById } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { slugit, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+// import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -80,6 +80,7 @@ import Link from 'next/link';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { NextLink } from '@mantine/next';
+import { useCatchNavigation } from '~/store/catch-navigation.store';
 
 /**NOTES**
   - If a model depicts an actual person, it cannot have nsfw content
@@ -187,23 +188,24 @@ export function ModelForm({ model }: Props) {
     type: model?.type ?? ModelType.Checkpoint,
     status: model?.status ?? ModelStatus.Published,
     tagsOnModels: model?.tagsOnModels.map(({ tag }) => tag.name) ?? [],
-    modelVersions: model?.modelVersions.map(
-      ({ trainedWords, images, files, baseModel, ...version }) => ({
-        ...version,
-        uuid: uuidv4(),
-        baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
-        trainedWords: trainedWords,
-        skipTrainedWords: !trainedWords.length,
-        // HOTFIX: Casting image.meta type issue with generated prisma schema
-        images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
-        // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
-        files: files.length > 0 ? (files as (typeof defaultModelFile)[]) : [defaultModelFile],
-        earlyAccessTimeFrame:
-          version.earlyAccessTimeFrame && features.earlyAccessModel
-            ? String(version.earlyAccessTimeFrame)
-            : '0',
-      })
-    ) ?? [defaultModelVersion],
+    modelVersions: model?.modelVersions.map(({ images, files, baseModel, ...version }) => ({
+      ...version,
+      uuid: uuidv4(),
+      baseModel: (baseModel as BaseModel) ?? defaultModelVersion.baseModel,
+      skipTrainedWords:
+        !version.trainedWords.length ||
+        !['Checkpoint', 'TextualInversion', 'LORA', 'LoCon', 'Wildcards'].includes(
+          model?.type ?? ''
+        ),
+      // HOTFIX: Casting image.meta type issue with generated prisma schema
+      images: images.map((image) => ({ ...image, meta: image.meta as ImageMetaProps })) ?? [],
+      // HOTFIX: Casting files to defaultModelFile[] to avoid type confusion and accept room for error
+      files: files.length > 0 ? (files as (typeof defaultModelFile)[]) : [defaultModelFile],
+      earlyAccessTimeFrame:
+        version.earlyAccessTimeFrame && features.earlyAccessModel
+          ? String(version.earlyAccessTimeFrame)
+          : '0',
+    })) ?? [defaultModelVersion],
   };
 
   const form = useForm({
@@ -224,7 +226,11 @@ export function ModelForm({ model }: Props) {
   });
 
   const { isDirty, isSubmitted, errors } = form.formState;
-  useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
+  // useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
+  useCatchNavigation({
+    name: 'model-form',
+    predicate: isDirty && !isSubmitted,
+  });
 
   const tagsOnModels = form.watch('tagsOnModels');
 
@@ -271,7 +277,13 @@ export function ModelForm({ model }: Props) {
   const mutating = addMutation.isLoading || updateMutation.isLoading;
   const [type, allowDerivatives, status] = form.watch(['type', 'allowDerivatives', 'status']);
 
-  const acceptsTrainedWords = ['Checkpoint', 'TextualInversion', 'LORA'].includes(type);
+  const acceptsTrainedWords = [
+    'Checkpoint',
+    'TextualInversion',
+    'LORA',
+    'LoCon',
+    'Wildcards',
+  ].includes(type);
   const isTextualInversion = type === 'TextualInversion';
 
   const copyImages = ({ from, to }: { from: number; to: number }) => {
@@ -291,7 +303,7 @@ export function ModelForm({ model }: Props) {
       const { asDraft } = options;
 
       const commonOptions = {
-        async onSuccess(results: Model | undefined, input: { id?: number }) {
+        async onSuccess(results: { id?: number; name?: string }, input: { id?: number }) {
           const modelLink = `/models/${results?.id}/${slugit(results?.name ?? '')}`;
 
           showSuccessNotification({
@@ -320,9 +332,10 @@ export function ModelForm({ model }: Props) {
           const match = tags.find((x) => x.name === name);
           return match ?? { name };
         }),
-        modelVersions: values.modelVersions.map(({ earlyAccessTimeFrame, ...version }) => ({
+        modelVersions: values.modelVersions.map(({ earlyAccessTimeFrame, images, ...version }) => ({
           ...version,
           earlyAccessTimeFrame: Number(earlyAccessTimeFrame),
+          images: images.map(({ analysis, ...image }) => image),
         })),
       };
 
@@ -389,6 +402,7 @@ export function ModelForm({ model }: Props) {
           const trainedWords = modelVersion.trainedWords ?? [];
           const [firstWord] = trainedWords;
 
+          form.setValue(`modelVersions.${index}.skipTrainedWords`, false);
           if (firstWord) form.setValue(`modelVersions.${index}.trainedWords`, [firstWord]);
         });
         break;
@@ -396,6 +410,7 @@ export function ModelForm({ model }: Props) {
       case 'AestheticGradient':
       case 'Controlnet':
       case 'Poses':
+      case 'Other':
         modelVersions.forEach((_, index) => {
           form.setValue(`modelVersions.${index}.trainedWords`, []);
           form.setValue(`modelVersions.${index}.skipTrainedWords`, true);
@@ -458,7 +473,7 @@ export function ModelForm({ model }: Props) {
                         label="Type"
                         placeholder="Type"
                         data={Object.values(ModelType).map((type) => ({
-                          label: splitUppercase(type),
+                          label: getDisplayName(type),
                           value: type,
                         }))}
                         onChange={handleModelTypeChange}
@@ -533,7 +548,13 @@ export function ModelForm({ model }: Props) {
                   size="xs"
                   leftIcon={<IconPlus size={16} />}
                   variant="outline"
-                  onClick={() => prepend({ ...defaultModelVersion, uuid: uuidv4() })}
+                  onClick={() =>
+                    prepend({
+                      ...defaultModelVersion,
+                      uuid: uuidv4(),
+                      skipTrainedWords: !acceptsTrainedWords,
+                    })
+                  }
                   compact
                 >
                   Add Version
@@ -543,7 +564,7 @@ export function ModelForm({ model }: Props) {
               {modelVersions.map((version, index) => {
                 const trainedWords = form.watch(`modelVersions.${index}.trainedWords`) ?? [];
                 const skipTrainedWords =
-                  !isTextualInversion &&
+                  !acceptsTrainedWords &&
                   (form.watch(`modelVersions.${index}.skipTrainedWords`) ?? false);
                 const name = form.watch(`modelVersions.${index}.name`) ?? '';
                 const showEarlyAccess =
@@ -720,6 +741,7 @@ export function ModelForm({ model }: Props) {
                                   clearable
                                   searchable
                                   required
+                                  parsePaste
                                 />
                               )}
                               {!isTextualInversion && (
@@ -776,8 +798,9 @@ export function ModelForm({ model }: Props) {
                                   <Menu.Label>Versions</Menu.Label>
                                   {modelVersions.map((version, i) => {
                                     if (i === index) return null;
-                                    const versionName =
-                                      form.getValues(`modelVersions.${i}.name`) ?? `Version ${i}`;
+                                    let versionName = form.getValues(`modelVersions.${i}.name`);
+                                    if (!versionName || versionName === '')
+                                      versionName = `Version ${i + 1}`;
                                     return (
                                       <Menu.Item
                                         key={i}
@@ -891,6 +914,9 @@ export function ModelForm({ model }: Props) {
                       },
                     ]}
                   />
+                  <Text size="xs" color="dimmed">
+                    These are requests, not a formal license.
+                  </Text>
                 </Stack>
               </Paper>
               <Paper radius="md" p="xl" withBorder>

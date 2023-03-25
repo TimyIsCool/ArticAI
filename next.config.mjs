@@ -22,6 +22,8 @@ export default defineNextConfig({
   eslint: {
     ignoreDuringBuilds: true,
   },
+  generateEtags: false,
+  compress: false,
   images: {
     domains: [
       's3.us-west-1.wasabisys.com',
@@ -34,6 +36,7 @@ export default defineNextConfig({
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
   },
+  poweredByHeader: false,
   redirects: async () => {
     return [
       {
@@ -57,10 +60,31 @@ export default defineNextConfig({
         permanent: true,
       },
       {
+        source: '/reddit',
+        destination: 'https://reddit.com/r/civitai',
+        permanent: true,
+      },
+      {
         source: '/ideas',
         destination: 'https://github.com/civitai/civitai/discussions/categories/ideas',
         permanent: true,
       },
+      {
+        source: '/v/civitai-link-intro',
+        destination: 'https://youtu.be/MaSRXvM05x4',
+        permanent: false,
+      },
+      {
+        source: '/v/civitai-link-installation',
+        destination: 'https://youtu.be/fs-Zs-fvxb0',
+        permanent: false,
+      },
+      // TODO: Uncomment this after completing the new image detail page
+      // {
+      //   source: '/gallery/:path*',
+      //   destination: '/images/:path*',
+      //   permanent: true,
+      // },
     ];
   },
   output: 'standalone',

@@ -14,10 +14,12 @@ import {
   Grid,
   Badge,
   ActionIcon,
+  Box,
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
+  IconAlbum,
   IconCircleDashed,
   IconCrown,
   IconFile,
@@ -26,6 +28,7 @@ import {
   IconLogout,
   IconMoonStars,
   IconPalette,
+  IconPhoto,
   IconPlus,
   IconQuestionCircle,
   IconSettings,
@@ -37,6 +40,7 @@ import {
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { useMemo, useState } from 'react';
 
 import { ListSearch } from '~/components/ListSearch/ListSearch';
@@ -48,6 +52,9 @@ import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
+import { UploadTracker } from '~/components/Resource/UploadTracker';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 
 const HEADER_HEIGHT = 70;
 
@@ -172,6 +179,7 @@ export function AppHeader() {
   const ref = useClickOutside(() => closeBurger());
 
   const isMuted = currentUser?.muted ?? false;
+  const features = useFeatureFlags();
 
   const links: MenuLink[] = useMemo(
     () => [
@@ -193,6 +201,26 @@ export function AppHeader() {
           <Group align="center" spacing="xs">
             <IconFile stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Your models
+          </Group>
+        ),
+      },
+      {
+        href: `/user/${currentUser?.username}/posts`,
+        visible: !!currentUser && features.posts,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Your posts
+          </Group>
+        ),
+      },
+      {
+        href: `/user/${currentUser?.username}/images`,
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconPhoto stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Your images
           </Group>
         ),
       },
@@ -353,8 +381,13 @@ export function AppHeader() {
                 Sign In
               </Button>
             ) : null}
-
-            {currentUser?.showNsfw && <BlurToggle />}
+            {currentUser && (
+              <>
+                <UploadTracker />
+                <CivitaiLinkPopover />
+              </>
+            )}
+            {currentUser?.showNsfw && <BrowsingModeIcon />}
             {currentUser && <NotificationBell />}
             <Menu
               width={260}
@@ -410,7 +443,8 @@ export function AppHeader() {
           </Group>
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
-          <Group>
+          <Group spacing={4} noWrap>
+            {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             <Burger
               opened={burgerOpened}
@@ -419,8 +453,20 @@ export function AppHeader() {
             />
             <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
               {(styles) => (
-                <Paper className={classes.dropdown} withBorder style={styles}>
+                <Paper
+                  className={classes.dropdown}
+                  withBorder
+                  shadow="md"
+                  style={{ ...styles, borderLeft: 0, borderRight: 0 }}
+                  radius={0}
+                >
                   {burgerMenuItems}
+                  {currentUser && (
+                    <Box px="md">
+                      <BrowsingModeMenu />
+                    </Box>
+                  )}
+
                   <Group p="md" position="apart" grow>
                     <ActionIcon
                       variant="default"

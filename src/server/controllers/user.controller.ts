@@ -16,6 +16,8 @@ import {
   toggleModelHide,
   toggleModelFavorite,
   getUserCosmetics,
+  acceptTOS,
+  completeOnboarding,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -35,6 +37,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -42,16 +45,23 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { isUUID } from '~/utils/string-helpers';
+import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 
-export const getAllUsersHandler = ({ input }: { input: GetAllUsersInput }) => {
+export const getAllUsersHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllUsersInput;
+  ctx: Context;
+}) => {
   try {
-    return getUsers({
+    const users = await getUsers({
       ...input,
-      select: {
-        username: true,
-        id: true,
-      },
+      email: ctx.user?.isModerator ? input.email : undefined,
     });
+
+    return users;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -66,6 +76,22 @@ export const getUserCreatorHandler = async ({
     return await getUserCreator({ username, id });
   } catch (error) {
     throwDbError(error);
+  }
+};
+
+export const getUsernameAvailableHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByUsernameSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const user = await getUserByUsername({ ...input, select: { id: true } });
+    return !user || user.id === ctx.user.id;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 
@@ -120,6 +146,37 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNulla
   }
 };
 
+const validAvatarUrlPrefixes = [
+  'https://cdn.discordapp.com/avatars/',
+  'https://cdn.discordapp.com/embed/avatars/',
+  'https://avatars.githubusercontent.com/u/',
+  'https://lh3.googleusercontent.com/a/',
+];
+const verifyAvatar = (avatar: string) => {
+  if (avatar.startsWith('http')) {
+    return validAvatarUrlPrefixes.some((prefix) => avatar.startsWith(prefix));
+  } else if (isUUID(avatar)) return true; // Is a CF Images UUID
+  return false;
+};
+
+export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    await acceptTOS({ id });
+  } catch (e) {
+    throw throwDbError(e);
+  }
+};
+
+export const completeOnboardingHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const { id } = ctx.user;
+    await completeOnboarding({ id });
+  } catch (e) {
+    throw throwDbError(e);
+  }
+};
+
 export const updateUserHandler = async ({
   ctx,
   input,
@@ -127,9 +184,14 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpdateInput>;
 }) => {
-  const { id, badgeId, nameplateId, ...data } = input;
+  const { id, badgeId, nameplateId, showNsfw, ...data } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
+
+  if (data.image) {
+    const valid = verifyAvatar(data.image);
+    if (!valid) throw throwBadRequestError('Invalid avatar URL');
+  }
 
   const isSettingCosmetics = badgeId !== undefined && nameplateId !== undefined;
 
@@ -137,11 +199,11 @@ export const updateUserHandler = async ({
     const payloadCosmeticIds: number[] = [];
     if (badgeId) payloadCosmeticIds.push(badgeId);
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
-
     const updatedUser = await updateUserById({
       id,
       data: {
         ...data,
+        showNsfw,
         cosmetics: !isSettingCosmetics
           ? undefined
           : {
@@ -157,6 +219,7 @@ export const updateUserHandler = async ({
       },
     });
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
+    if (showNsfw === false) await refreshAllHiddenForUser({ userId: id });
 
     return updatedUser;
   } catch (error) {
@@ -251,7 +314,11 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
       skip,
       count: true,
       excludeIds: [-1], // Exclude civitai user
-      select: { username: true, models: { select: { id: true }, where: { status: 'Published' } } },
+      select: {
+        username: true,
+        models: { select: { id: true }, where: { status: 'Published' } },
+        image: true,
+      },
     });
 
     return getPagingData(results, take, page);
@@ -503,7 +570,7 @@ export const getUserTagsHandler = async ({
   }
 };
 
-export const toggleBlockedTagHandler = ({
+export const toggleBlockedTagHandler = async ({
   input,
   ctx,
 }: {
@@ -512,7 +579,7 @@ export const toggleBlockedTagHandler = ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    return toggleBlockedTag({ ...input, userId });
+    await toggleBlockedTag({ ...input, userId });
   } catch (error) {
     throw throwDbError(error);
   }

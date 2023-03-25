@@ -118,14 +118,14 @@ export default createRoutedContext({
             <InputRating name="rating" label="Rate the model" size="xl" withAsterisk required />
             {rating <= 3 && !reviewId && (
               <AlertWithIcon icon={<IconAlertCircle size={14} />} iconColor="yellow" color="yellow">
-                {`If you're having trouble with this model or reproducing an example image, `}
+                {`Reviews should focus on evaluating the model's output quality. For other concerns or difficulties, please `}
                 <Text
                   variant="link"
                   sx={{ cursor: 'pointer', lineHeight: 1 }}
                   onClick={goToCommentModal}
                   span
                 >
-                  consider leaving a comment instead.
+                  leave a comment instead.
                 </Text>
               </AlertWithIcon>
             )}
@@ -138,7 +138,6 @@ export default createRoutedContext({
             <InputImageUpload
               name="images"
               label="Generated Images"
-              loading={isUploading}
               onChange={(values) => {
                 setIsUploading(values.some((x) => x.status === 'uploading'));
                 setIsComplete(values.filter((x) => x.status).every((x) => x.status === 'complete'));

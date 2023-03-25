@@ -24,6 +24,7 @@ import {
   convertReviewToComment,
   updateReviewReportStatusByReason,
 } from '~/server/services/review.service';
+import { getHiddenImagesForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -41,13 +42,12 @@ export const getReviewsInfiniteHandler = async ({
 }) => {
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
-  const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
 
   const reviews = await getReviews({
     input: { ...input, limit },
     user: ctx.user,
-    select: getAllReviewsSelect(canViewNsfw),
+    select: getAllReviewsSelect,
   });
 
   let nextCursor: number | undefined;
@@ -56,18 +56,32 @@ export const getReviewsInfiniteHandler = async ({
     nextCursor = nextItem?.id;
   }
 
+  const userId = ctx.user?.id;
+  const hiddenTags = await getHiddenTagsForUser({ userId });
+  const allHiddenTags = [...hiddenTags.moderatedTags, ...hiddenTags.hiddenTags];
+  const hiddenImages = await getHiddenImagesForUser({ userId });
+
   return {
     nextCursor,
     reviews: reviews.map(({ imagesOnReviews, ...review }) => {
       const isOwnerOrModerator = review.user.id === ctx.user?.id || ctx.user?.isModerator;
-      const images =
-        !isOwnerOrModerator && prioritizeSafeImages
-          ? imagesOnReviews
-              .sort((a, b) => {
-                return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
-              })
-              .map((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) }))
-          : imagesOnReviews.map((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) }));
+      let images = imagesOnReviews.map((x) => ({
+        ...x.image,
+        tags: x.image.tags.map(({ tag }) => tag),
+      }));
+      if (!isOwnerOrModerator) {
+        images = images.filter(
+          ({ id, tags, scannedAt, needsReview }) =>
+            !needsReview &&
+            scannedAt &&
+            !hiddenImages.includes(id) &&
+            !tags.some((tag) => allHiddenTags.includes(tag.id))
+        );
+
+        if (prioritizeSafeImages)
+          images = images.sort((a, b) => (a.nsfw === b.nsfw ? 0 : a.nsfw ? 1 : -1));
+      }
+
       return { ...review, images };
     }),
   };
@@ -180,7 +194,7 @@ export const getReviewDetailsHandler = async ({
     const prioritizeSafeImages = !ctx.user || (ctx.user?.showNsfw && ctx.user?.blurNsfw);
     const result = await getReviewById({
       id,
-      select: reviewDetailSelect(canViewNsfw),
+      select: reviewDetailSelect,
       user: ctx.user,
     });
     if (!result) throw throwNotFoundError(`No review with id ${id}`);

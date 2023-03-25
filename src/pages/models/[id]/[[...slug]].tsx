@@ -19,7 +19,6 @@ import {
   Rating,
   AspectRatio,
   Paper,
-  Anchor,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
@@ -52,7 +51,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useInfiniteModelsFilters } from '~/components/InfiniteModels/InfiniteModelsFilters';
@@ -66,7 +65,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
-import { splitUppercase, removeTags } from '~/utils/string-helpers';
+import { removeTags, getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
@@ -96,6 +95,9 @@ import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ModelById } from '~/types/router';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
+import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import truncate from 'lodash/truncate';
 
 //TODO - Break model query into multiple queries
 /*
@@ -184,10 +186,6 @@ const useStyles = createStyles((theme) => ({
 
   // Increase carousel control arrow size
   control: {
-    minWidth: 56,
-    minHeight: 56,
-    borderRadius: '50%',
-
     svg: {
       width: 24,
       height: 24,
@@ -212,6 +210,7 @@ export default function ModelDetail({
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
   const filters = useInfiniteModelsFilters();
+  const { connected: civitaiLinked } = useCivitaiLink();
 
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -356,7 +355,7 @@ export default function ModelDetail({
   const meta = (
     <Meta
       title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
-      description={removeTags(model.description ?? '')}
+      description={truncate(removeTags(model.description ?? ''), { length: 150 })}
       image={
         nsfw || latestVersion?.images[0]?.url == null
           ? undefined
@@ -411,7 +410,7 @@ export default function ModelDetail({
       value: (
         <Group spacing={0} noWrap position="apart">
           <Badge radius="sm" px={5}>
-            {splitUppercase(model.type)} {model.checkpointType}
+            {getDisplayName(model.type)} {model.checkpointType}
           </Badge>
           {model?.status !== ModelStatus.Published ? (
             <Badge color="yellow" radius="sm">
@@ -457,10 +456,44 @@ export default function ModelDetail({
       label: 'Trigger Words',
       visible: !!latestVersion?.trainedWords?.length,
       value: (
-        <TrainedWords trainedWords={latestVersion?.trainedWords} files={latestVersion?.files} />
+        <TrainedWords
+          trainedWords={latestVersion?.trainedWords}
+          files={latestVersion?.files}
+          type={model.type}
+        />
       ),
     },
   ];
+
+  const primaryFileDetails = primaryFile && (
+    <Group position="apart" noWrap spacing={0}>
+      <VerifiedText file={primaryFile} />
+      <Text size="xs" color="dimmed">
+        {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
+        {primaryFile.format}
+      </Text>
+    </Group>
+  );
+
+  const downloadMenuItems = latestVersion?.files.map((file, index) => (
+    <Menu.Item
+      key={index}
+      component="a"
+      py={4}
+      icon={<VerifiedText file={file} iconOnly />}
+      href={createModelFileDownloadUrl({
+        versionId: latestVersion.id,
+        type: file.type,
+        format: file.format,
+      })}
+      download
+    >
+      {`${startCase(file.type)}${
+        ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.format : ''
+      } (${formatKBytes(file.sizeKB)})`}
+    </Menu.Item>
+  ));
+  const displayCivitaiLink = civitaiLinked && latestVersion?.hashes.length > 0;
 
   return (
     <>
@@ -517,7 +550,7 @@ export default function ModelDetail({
                   </IconBadge>
                 )}
               </Group>
-              <Menu position="bottom-end" transition="pop-top-right">
+              <Menu position="bottom-end" transition="pop-top-right" zIndex={100}>
                 <Menu.Target>
                   <ActionIcon variant="outline">
                     <IconDotsVertical size={16} />
@@ -624,7 +657,7 @@ export default function ModelDetail({
                     <IconExclamationMark />
                   </ThemeIcon>
                   <Text size="md">
-                    The images on this {splitUppercase(model.type).toLowerCase()} are inaccurate.
+                    The images on this {getDisplayName(model.type).toLowerCase()} are inaccurate.
                     Please submit reviews with images so that we can improve this page.
                   </Text>
                 </Group>
@@ -639,56 +672,50 @@ export default function ModelDetail({
                 </Box>
                 <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                   {latestVersion.canDownload ? (
-                    <Stack sx={{ flex: 1 }} spacing={4}>
-                      <MultiActionButton
-                        component="a"
-                        href={createModelFileDownloadUrl({
-                          versionId: latestVersion.id,
-                          primary: true,
-                        })}
-                        leftIcon={<IconDownload size={16} />}
-                        disabled={!primaryFile}
-                        menuItems={
-                          latestVersion?.files.length > 1
-                            ? latestVersion?.files.map((file, index) => (
-                                <Menu.Item
-                                  key={index}
-                                  component="a"
-                                  py={4}
-                                  icon={<VerifiedText file={file} iconOnly />}
-                                  href={createModelFileDownloadUrl({
-                                    versionId: latestVersion.id,
-                                    type: file.type,
-                                    format: file.format,
-                                  })}
-                                  download
-                                >
-                                  {`${startCase(file.type)}${
-                                    ['Model', 'Pruned Model'].includes(file.type)
-                                      ? ' ' + file.format
-                                      : ''
-                                  } (${formatKBytes(file.sizeKB)})`}
-                                </Menu.Item>
-                              ))
-                            : []
-                        }
-                        menuTooltip="Other Downloads"
-                        download
-                      >
-                        <Text align="center">
-                          {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                        </Text>
-                      </MultiActionButton>
-                      {primaryFile && (
-                        <Group position="apart" noWrap spacing={0}>
-                          <VerifiedText file={primaryFile} />
-                          <Text size="xs" color="dimmed">
-                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                            {primaryFile.format}
+                    displayCivitaiLink ? (
+                      <Stack sx={{ flex: 1 }} spacing={4}>
+                        <CivitiaLinkManageButton
+                          modelId={model.id}
+                          modelVersionId={latestVersion.id}
+                          modelName={model.name}
+                          modelType={model.type}
+                          hashes={latestVersion.hashes}
+                          noTooltip
+                        >
+                          {({ color, onClick, ref, icon, label }) => (
+                            <Button
+                              ref={ref}
+                              color={color}
+                              onClick={onClick}
+                              leftIcon={icon}
+                              disabled={!primaryFile}
+                            >
+                              {label}
+                            </Button>
+                          )}
+                        </CivitiaLinkManageButton>
+                        {primaryFileDetails}
+                      </Stack>
+                    ) : (
+                      <Stack sx={{ flex: 1 }} spacing={4}>
+                        <MultiActionButton
+                          component="a"
+                          href={createModelFileDownloadUrl({
+                            versionId: latestVersion.id,
+                            primary: true,
+                          })}
+                          leftIcon={<IconDownload size={16} />}
+                          disabled={!primaryFile}
+                          menuItems={downloadMenuItems.length > 1 ? downloadMenuItems : []}
+                          menuTooltip="Other Downloads"
+                        >
+                          <Text align="center">
+                            {`Download Latest (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                           </Text>
-                        </Group>
-                      )}
-                    </Stack>
+                        </MultiActionButton>
+                        {primaryFileDetails}
+                      </Stack>
+                    )
                   ) : (
                     <Stack sx={{ flex: 1 }} spacing={4}>
                       <JoinPopover>
@@ -698,19 +725,33 @@ export default function ModelDetail({
                           </Text>
                         </Button>
                       </JoinPopover>
-                      {primaryFile && (
-                        <Group position="apart" noWrap spacing={0}>
-                          <VerifiedText file={primaryFile} />
-                          <Text size="xs" color="dimmed">
-                            {primaryFile.type === 'Pruned Model' ? 'Pruned ' : ''}
-                            {primaryFile.format}
-                          </Text>
-                        </Group>
-                      )}
+                      {primaryFileDetails}
                     </Stack>
                   )}
-
-                  <RunButton modelVersionId={latestVersion.id} />
+                  {displayCivitaiLink ? (
+                    latestVersion.canDownload ? (
+                      <Menu position="bottom-end">
+                        <Menu.Target>
+                          <Tooltip label="Download options" withArrow>
+                            <Button px={0} w={36} variant="light">
+                              <IconDownload />
+                            </Button>
+                          </Tooltip>
+                        </Menu.Target>
+                        <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                      </Menu>
+                    ) : (
+                      <JoinPopover>
+                        <Tooltip label="Download options" withArrow>
+                          <Button px={0} w={36} variant="light">
+                            <IconDownload />
+                          </Button>
+                        </Tooltip>
+                      </JoinPopover>
+                    )
+                  ) : (
+                    <RunButton modelVersionId={latestVersion.id} />
+                  )}
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                     <div>
                       <LoginRedirect reason="favorite-model">
@@ -736,7 +777,7 @@ export default function ModelDetail({
                   files={latestVersion.files}
                 />
                 <DescriptionTable items={modelDetails} labelWidth="30%" />
-                <CreatorCard user={model.user} />
+                {model.user.id > 0 && <CreatorCard user={model.user} />}
 
                 <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
                   {model?.type === 'Checkpoint' && (
@@ -829,6 +870,8 @@ export default function ModelDetail({
                 <ModelVersions
                   type={model.type}
                   items={model.modelVersions}
+                  modelId={model.id}
+                  modelName={model.name}
                   initialTab={latestVersion?.id.toString()}
                   nsfw={model.nsfw}
                   locked={model.locked}
@@ -924,6 +967,7 @@ function ModelCarousel({
       align={latestVersion && latestVersion.images.length > 2 ? 'start' : 'center'}
       slidesToScroll={mobile ? 1 : 2}
       withControls={latestVersion && latestVersion.images.length > 2 ? true : false}
+      controlSize={56}
       loop
     >
       <ImageGuard
@@ -935,7 +979,7 @@ function ModelCarousel({
             <Center style={{ height: '100%', width: '100%' }}>
               <div style={{ width: '100%', position: 'relative' }}>
                 <ImageGuard.ToggleConnect />
-                <ImageGuard.ReportNSFW />
+                <ImageGuard.Report />
                 <ImageGuard.Unsafe>
                   <AspectRatio
                     ratio={(image.width ?? 1) / (image.height ?? 1)}

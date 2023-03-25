@@ -27,7 +27,7 @@ type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;
   // lightboxImages?: ImageModel[];
-  image: Omit<ImageModel, 'tags'>;
+  image: Omit<ImageModel, 'tags' | 'scannedAt' | 'userId'>;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
@@ -36,7 +36,7 @@ type ImagePreviewProps = {
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
-  image: { url, name, width, height, hash, meta, generationProcess, needsReview },
+  image: { id, url, name, width, height, hash, meta, generationProcess, needsReview },
   edgeImageProps = {},
   nsfw,
   aspectRatio,
@@ -91,7 +91,7 @@ export function ImagePreview({
       <HoverCard.Dropdown p={8}>
         <Stack spacing={0}>
           <Text weight="bold" size="xs">
-            Flagged by age detection
+            Flagged for review
           </Text>
           <Text size="xs">
             {`This image won't be visible to other users until it's reviewed by our moderators.`}
@@ -114,6 +114,7 @@ export function ImagePreview({
   ) : (
     <EdgeImage
       src={url}
+      name={name ?? id.toString()}
       alt={name ?? undefined}
       {...edgeImageProps}
       onClick={onClick}

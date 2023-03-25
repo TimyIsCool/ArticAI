@@ -115,7 +115,7 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
                     icon={<IconFlag size={14} stroke={1.5} />}
                     onClick={() =>
                       openContext('report', {
-                        entityType: ReportEntity.Comment,
+                        entityType: ReportEntity.CommentV2,
                         entityId: comment.id,
                       })
                     }
@@ -170,7 +170,7 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
 
 function CommentReactions({ comment }: { comment: InfiniteCommentResults['comments'][0] }) {
   const currentUser = useCurrentUser();
-  const userReactions = comment.reactions.filter((x) => x.user.id === currentUser?.id);
+  const userReactions = comment.reactions.filter((x) => x.userId === currentUser?.id);
   const metrics = useMemo(
     (): ReactionMetrics => ({
       likeCount: comment.reactions.filter((x) => x.reaction === ReviewReactions.Like).length,

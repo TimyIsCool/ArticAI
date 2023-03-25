@@ -1,4 +1,4 @@
-import { Button, Group, Popover, Text, PopoverProps } from '@mantine/core';
+import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
 import { IconMoodSmile, IconPlus } from '@tabler/icons';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -24,9 +24,11 @@ const availableReactions: ReactionToEmoji = {
 };
 
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
-  reactions: ReactionDetails[];
+  reactions: { userId: number; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
   popoverPosition?: PopoverProps['position'];
+  readonly?: boolean;
+  withinPortal?: boolean;
 };
 
 export function Reactions({
@@ -35,7 +37,10 @@ export function Reactions({
   entityType,
   entityId,
   popoverPosition = 'top-start',
-}: ReactionsProps) {
+  readonly,
+  withinPortal,
+  ...groupProps
+}: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
   const currentUser = useCurrentUser();
 
   return (
@@ -43,11 +48,20 @@ export function Reactions({
       spacing={4}
       align="center"
       onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
+        if (!readonly) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
       }}
+      {...groupProps}
     >
-      <Popover shadow="md" position={popoverPosition} withArrow withinPortal>
+      <Popover
+        shadow="md"
+        position={popoverPosition}
+        withArrow
+        disabled={readonly}
+        withinPortal={withinPortal}
+      >
         <Popover.Target>
           <Button variant="subtle" size="xs" color="gray" radius="xl" compact>
             <Group spacing={2}>
@@ -80,6 +94,7 @@ export function Reactions({
         entityType={entityType}
         entityId={entityId}
         noEmpty
+        readonly={readonly}
       >
         {ReactionBadge}
       </ReactionsList>
@@ -95,6 +110,7 @@ function ReactionsList({
   available,
   children,
   noEmpty,
+  readonly,
 }: Omit<ReactionsProps, 'popoverPosition'> & {
   noEmpty?: boolean;
   available?: ReviewReactions[];
@@ -103,6 +119,7 @@ function ReactionsList({
     count: number;
     reaction: ReviewReactions;
   }) => React.ReactElement;
+  readonly?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const keys = Object.keys(availableReactions) as ReviewReactions[];
@@ -114,7 +131,7 @@ function ReactionsList({
           const reactionMetricType = `${reaction.toLowerCase()}Count` as keyof ReactionMetrics;
           const count = metrics[reactionMetricType] ?? 0;
           const userReaction = reactions.find(
-            (x) => x.user.id === currentUser?.id && x.reaction === reaction
+            (x) => x.userId === currentUser?.id && x.reaction === reaction
           );
           return (
             <ReactionButton
@@ -124,7 +141,7 @@ function ReactionsList({
               count={count}
               entityType={entityType}
               entityId={entityId}
-              readonly={!currentUser}
+              readonly={!currentUser || readonly}
               noEmpty={noEmpty}
             >
               {children}

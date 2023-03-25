@@ -1,7 +1,8 @@
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { ModelVersionEngagementType, Prisma } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 
 export const getModelVersion = async <TSelect extends Prisma.ModelVersionSelect>({
   input: { id },
@@ -12,7 +13,7 @@ export const getModelVersion = async <TSelect extends Prisma.ModelVersionSelect>
   user?: SessionUser;
   select: TSelect;
 }) => {
-  const model = await dbWrite.modelVersion.findUnique({ where: { id }, select });
+  const model = await dbRead.modelVersion.findUnique({ where: { id }, select });
   return model;
 };
 
@@ -21,7 +22,7 @@ export const getModelVersionRunStrategies = async ({
 }: {
   modelVersionId: number;
 }) =>
-  dbWrite.runStrategy.findMany({
+  dbRead.runStrategy.findMany({
     where: { modelVersionId },
     select: {
       id: true,
@@ -33,7 +34,7 @@ export const getVersionById = <TSelect extends Prisma.ModelVersionSelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return dbWrite.modelVersion.findUnique({ where: { id }, select });
+  return dbRead.modelVersion.findUnique({ where: { id }, select });
 };
 
 export const toggleModelVersionEngagement = async ({
@@ -64,10 +65,20 @@ export const toggleModelVersionEngagement = async ({
     return;
   }
 
-  await dbWrite.modelVersionEngagement.create({ data: { type, modelVersionId: versionId, userId } });
+  await dbWrite.modelVersionEngagement.create({
+    data: { type, modelVersionId: versionId, userId },
+  });
   return;
 };
 
 export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId: number }) => {
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
+};
+
+export const upsertModelVersion = ({ id, ...data }: ModelVersionUpsertInput) => {
+  return dbWrite.modelVersion.upsert({
+    where: { id: id ?? -1 },
+    create: { ...data },
+    update: { ...data },
+  });
 };

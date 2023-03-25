@@ -35,6 +35,7 @@ import {
   Box,
   Alert,
   HoverCard,
+  Title,
 } from '@mantine/core';
 import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useLocalStorage } from '@mantine/hooks';
@@ -55,7 +56,6 @@ import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview'
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { useImageUpload } from '~/hooks/useImageUpload';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { trpc } from '~/utils/trpc';
 import { SimpleTag } from '~/server/selectors/tag.selector';
@@ -309,7 +309,7 @@ function UploadedImage({
           </HoverCard.Target>
           <HoverCard.Dropdown>
             <Text size="sm" weight={500}>
-              Flagged by age detection
+              Flagged for review
             </Text>
             <Text size="sm" sx={{ lineHeight: 1.2 }}>
               After submission this image will be reviewed by a moderator.
@@ -333,7 +333,8 @@ function UploadedImage({
       >
         {!showLoading && (!image.status || image.status === 'complete') && (
           <>
-            <Tooltip label="Toggle NSFW">
+            {/* Disable as part of move to advanced self-mod */}
+            {/* <Tooltip label="Toggle NSFW">
               <ActionIcon
                 color={image.nsfw ? 'red' : undefined}
                 variant={image.nsfw ? 'filled' : 'outline'}
@@ -342,7 +343,7 @@ function UploadedImage({
               >
                 <IconRating18Plus />
               </ActionIcon>
-            </Tooltip>
+            </Tooltip> */}
             {withMeta && (
               <ImageMetaPopover
                 meta={image.meta}
@@ -428,6 +429,75 @@ function ImageMetaPopover({
     setOpened(false);
   };
 
+  const generationParams = (
+    <Grid gutter="xs">
+      <Grid.Col span={12}>
+        <Textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          label="Prompt"
+          autosize
+          maxRows={3}
+        />
+      </Grid.Col>
+      <Grid.Col span={12}>
+        <Textarea
+          value={negativePrompt}
+          onChange={(e) => setNegativePrompt(e.target.value)}
+          label="Negative prompt"
+          autosize
+          maxRows={3}
+        />
+      </Grid.Col>
+      <Grid.Col span={6}>
+        <NumberInput
+          value={cfgScale}
+          onChange={(number) => setCfgScale(number)}
+          label="Guidance scale"
+          min={0}
+          max={30}
+        />
+      </Grid.Col>
+      <Grid.Col span={6}>
+        <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
+      </Grid.Col>
+      <Grid.Col span={6}>
+        <Select
+          clearable
+          searchable
+          data={[
+            'Euler a',
+            'Euler',
+            'LMS',
+            'Heun',
+            'DPM2',
+            'DPM2 a',
+            'DPM++ 2S a',
+            'DPM++ 2M',
+            'DPM++ SDE',
+            'DPM fast',
+            'DPM adaptive',
+            'LMS Karras',
+            'DPM2 Karras',
+            'DPM2 a Karras',
+            'DPM++ 2S a Karras',
+            'DPM++ 2M Karras',
+            'DPM++ SDE Karras',
+            'DDIM',
+            'PLMS',
+            'UniPC',
+          ]}
+          value={sampler}
+          onChange={(value) => setSampler(value ?? undefined)}
+          label="Sampler"
+        />
+      </Grid.Col>
+      <Grid.Col span={6}>
+        <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
+      </Grid.Col>
+    </Grid>
+  );
+
   return (
     <Popover
       opened={opened}
@@ -438,8 +508,8 @@ function ImageMetaPopover({
       width={400}
     >
       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
-      <Popover.Dropdown p={0}>
-        <Tabs value={tab} onTabChange={setTab}>
+      <Popover.Dropdown>
+        {/* <Tabs value={tab} onTabChange={setTab}>
           <Tabs.List grow>
             <Tabs.Tab value="tags">Tags</Tabs.Tab>
             <Tabs.Tab value="meta">Generation Details</Tabs.Tab>
@@ -455,78 +525,16 @@ function ImageMetaPopover({
             />
           </Tabs.Panel>
           <Tabs.Panel value="meta" p="xs">
-            <Grid gutter="xs">
-              <Grid.Col span={12}>
-                <Textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  label="Prompt"
-                  autosize
-                  maxRows={3}
-                />
-              </Grid.Col>
-              <Grid.Col span={12}>
-                <Textarea
-                  value={negativePrompt}
-                  onChange={(e) => setNegativePrompt(e.target.value)}
-                  label="Negative prompt"
-                  autosize
-                  maxRows={3}
-                />
-              </Grid.Col>
-              <Grid.Col span={6}>
-                <NumberInput
-                  value={cfgScale}
-                  onChange={(number) => setCfgScale(number)}
-                  label="Guidance scale"
-                  min={0}
-                  max={30}
-                />
-              </Grid.Col>
-              <Grid.Col span={6}>
-                <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
-              </Grid.Col>
-              <Grid.Col span={6}>
-                <Select
-                  clearable
-                  searchable
-                  data={[
-                    'Euler a',
-                    'Euler',
-                    'LMS',
-                    'Heun',
-                    'DPM2',
-                    'DPM2 a',
-                    'DPM++ 2S a',
-                    'DPM++ 2M',
-                    'DPM++ SDE',
-                    'DPM fast',
-                    'DPM adaptive',
-                    'LMS Karras',
-                    'DPM2 Karras',
-                    'DPM2 a Karras',
-                    'DPM++ 2S a Karras',
-                    'DPM++ 2M Karras',
-                    'DPM++ SDE Karras',
-                    'DDIM',
-                    'PLMS',
-                  ]}
-                  value={sampler}
-                  onChange={(value) => setSampler(value ?? undefined)}
-                  label="Sampler"
-                />
-              </Grid.Col>
-              <Grid.Col span={6}>
-                <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
-              </Grid.Col>
-            </Grid>
+            {generationParams}
           </Tabs.Panel>
-        </Tabs>
-        <Group position="right" spacing={4} p="xs">
+        </Tabs> */}
+        <Title order={4}>Generation details</Title>
+        {generationParams}
+        <Group position="right" spacing={4} pt="sm">
           <Button fullWidth onClick={handleSubmit}>
             Save
           </Button>
-          {tab === 'tags' && (
+          {/* {tab === 'tags' && (
             <Button
               variant="subtle"
               size="xs"
@@ -537,7 +545,7 @@ function ImageMetaPopover({
             >
               Copy tags to all images
             </Button>
-          )}
+          )} */}
         </Group>
       </Popover.Dropdown>
     </Popover>

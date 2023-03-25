@@ -1,5 +1,6 @@
 // @ts-check
 import { z } from 'zod';
+import { zc } from '~/utils/schema-helpers';
 
 /**
  * Specify your server-side environment variables schema here.
@@ -9,6 +10,7 @@ export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_REPLICA_URL: z.string().url(),
   REDIS_URL: z.string().url(),
+  REDIS_TIMEOUT: z.preprocess((x) => x ? parseInt(String(x)) : 5000, z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
@@ -20,6 +22,8 @@ export const serverSchema = z.object({
   ),
   DISCORD_CLIENT_ID: z.string(),
   DISCORD_CLIENT_SECRET: z.string(),
+  DISCORD_BOT_TOKEN: z.string().optional(),
+  DISCORD_GUILD_ID: z.string().optional(),
   GITHUB_CLIENT_ID: z.string(),
   GITHUB_CLIENT_SECRET: z.string(),
   GOOGLE_CLIENT_ID: z.string(),
@@ -28,7 +32,7 @@ export const serverSchema = z.object({
   REDDIT_CLIENT_SECRET: z.string(),
   EMAIL_HOST: z.string(),
   EMAIL_PORT: z.preprocess((x) => parseInt(String(x)), z.number()),
-  EMAIL_SECURE: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  EMAIL_SECURE: zc.booleanString,
   EMAIL_USER: z.string(),
   EMAIL_PASS: z.string(),
   EMAIL_FROM: z.string(),
@@ -42,15 +46,19 @@ export const serverSchema = z.object({
   S3_UPLOAD_ENDPOINT: z.string().url(),
   S3_UPLOAD_BUCKET: z.string(),
   S3_SETTLED_BUCKET: z.string(),
+  S3_FORCE_PATH_STYLE: z
+    .preprocess((val) => val === true || val === 'true', z.boolean())
+    .default(false),
+  RATE_LIMITING: zc.booleanString,
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
   JOB_TOKEN: z.string(),
   WEBHOOK_TOKEN: z.string(),
   SCANNING_ENDPOINT: z.string(),
   SCANNING_TOKEN: z.string(),
-  UNAUTHENTICATED_DOWNLOAD: z.preprocess((val) => val === true || val === 'true', z.boolean()),
-  UNAUTHENTICATED_LIST_NSFW: z.preprocess((val) => val === true || val === 'true', z.boolean()),
-  SHOW_SFW_IN_NSFW: z.preprocess((val) => val === true || val === 'true', z.boolean()),
+  UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
+  UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
+  SHOW_SFW_IN_NSFW: zc.booleanString,
   STRIPE_SECRET_KEY: z.string(),
   STRIPE_WEBHOOK_SECRET: z.string(),
   STRIPE_DONATE_ID: z.string(),
@@ -59,6 +67,7 @@ export const serverSchema = z.object({
     const str = String(value);
     return str.split(',');
   }, z.array(z.string())),
+  IMAGE_SCANNING_ENDPOINT: z.string().optional(),
 });
 
 /**
@@ -70,6 +79,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string(),
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
+  NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
 });
 
@@ -84,4 +94,5 @@ export const clientEnv = {
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: process.env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION,
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
+  NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
 };

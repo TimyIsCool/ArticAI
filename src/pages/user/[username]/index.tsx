@@ -27,7 +27,8 @@ import {
 import { InferGetServerSidePropsType } from 'next/types';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { EdgeImage, getEdgeUrl } from '~/components/EdgeImage/EdgeImage';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
@@ -47,6 +48,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { openConfirmModal } from '@mantine/modals';
+import { NotFound } from '~/components/AppLayout/NotFound';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -69,7 +71,7 @@ export default function UserPage({
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
 
-  const { data: user } = trpc.user.getCreator.useQuery({ username });
+  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
 
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
@@ -138,6 +140,8 @@ export default function UserPage({
     }
   };
 
+  if (!userLoading && !user) return <NotFound />;
+
   return (
     <>
       {user && stats ? (
@@ -165,7 +169,12 @@ export default function UserPage({
               {user.image && (
                 <div className={classes.outsideImage}>
                   <AspectRatio ratio={1 / 1} className={classes.image}>
-                    <EdgeImage src={user.image} width={128} alt={user.username ?? ''} />
+                    <EdgeImage
+                      src={user.image}
+                      name={user.username}
+                      width={128}
+                      alt={user.username ?? ''}
+                    />
                   </AspectRatio>
                 </div>
               )}
@@ -174,7 +183,12 @@ export default function UserPage({
                   {user.image && (
                     <div className={classes.insideImage}>
                       <AspectRatio ratio={1 / 1} className={classes.image}>
-                        <EdgeImage src={user.image} width={128} alt={user.username ?? ''} />
+                        <EdgeImage
+                          src={user.image}
+                          name={user.username}
+                          width={128}
+                          alt={user.username ?? ''}
+                        />
                       </AspectRatio>
                     </div>
                   )}
@@ -332,7 +346,7 @@ export default function UserPage({
               <InfiniteModelsFilter />
             </Group>
           </Group>
-          <InfiniteModels showHidden />
+          <InfiniteModels />
         </Stack>
       </Container>
     </>

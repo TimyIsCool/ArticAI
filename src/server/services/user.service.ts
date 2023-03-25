@@ -1,7 +1,7 @@
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { ModelEngagementType, Prisma, TagEngagementType } from '@prisma/client';
 
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteUserInput,
@@ -12,6 +12,11 @@ import {
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { env } from '~/env/server.mjs';
+import {
+  refreshAllHiddenForUser,
+  refreshHiddenModelsForUser,
+  refreshHiddenUsersForUser,
+} from '~/server/services/user-cache.service';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -24,8 +29,8 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
     throw new Error('Must provide username or id');
   }
 
-  return dbWrite.user.findFirst({
-    where: { ...where, deletedAt: null },
+  return dbRead.user.findFirst({
+    where: { id: { not: -1 }, ...where, deletedAt: null },
     select: {
       id: true,
       image: true,
@@ -74,35 +79,26 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
   });
 };
 
-export const getUsers = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
-  limit,
-  query,
-  email,
-  select,
-  ids,
-}: GetAllUsersInput & { select: TSelect }) => {
-  return dbWrite.user.findMany({
-    take: limit,
-    select,
-    where: {
-      id: ids && ids.length > 0 ? { in: ids } : undefined,
-      username: query
-        ? {
-            contains: query,
-            mode: 'insensitive',
-          }
-        : undefined,
-      email: email,
-      deletedAt: null,
-    },
-  });
+export const getUsers = ({ limit, query, email, ids }: GetAllUsersInput) => {
+  return dbRead.$queryRaw<{ id: number; username: string }[]>`
+    SELECT id, username
+    FROM "User"
+    WHERE
+      ${ids && ids.length > 0 ? Prisma.sql`id IN ${Prisma.join(ids)}` : Prisma.sql`TRUE`}
+      AND ${query ? Prisma.sql`username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
+      AND ${email ? Prisma.sql`email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
+      AND "deletedAt" IS NULL
+      AND "id" != -1
+    ORDER BY LENGTH(username) ASC
+    LIMIT ${limit}
+  `;
 };
 
 export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id },
     select,
   });
@@ -112,8 +108,8 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   username,
   select,
 }: GetByUsernameSchema & { select: TSelect }) => {
-  return dbWrite.user.findUnique({
-    where: { username },
+  return dbRead.user.findFirst({
+    where: { username, deletedAt: null, id: { not: -1 } },
     select,
   });
 };
@@ -122,15 +118,29 @@ export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpda
   return dbWrite.user.update({ where: { id }, data });
 };
 
+export const acceptTOS = ({ id }: { id: number }) => {
+  return dbWrite.user.update({
+    where: { id },
+    data: { tos: true },
+  });
+};
+
+export const completeOnboarding = ({ id }: { id: number }) => {
+  return dbWrite.user.update({
+    where: { id },
+    data: { onboarded: true },
+  });
+};
+
 export const getUserEngagedModels = ({ id }: { id: number }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id },
     select: { engagedModels: { select: { modelId: true, type: true } } },
   });
 };
 
 export const getUserEngagedModelVersions = ({ id }: { id: number }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id },
     select: { engagedModelVersions: { select: { modelVersionId: true, type: true } } },
   });
@@ -143,11 +153,11 @@ export const getUserEngagedModelByModelId = ({
   userId: number;
   modelId: number;
 }) => {
-  return dbWrite.modelEngagement.findUnique({ where: { userId_modelId: { userId, modelId } } });
+  return dbRead.modelEngagement.findUnique({ where: { userId_modelId: { userId, modelId } } });
 };
 
 export const getUserTags = ({ userId, type }: { userId: number; type?: TagEngagementType }) => {
-  return dbWrite.tagEngagement.findMany({ where: { userId, type } });
+  return dbRead.tagEngagement.findMany({ where: { userId, type } });
 };
 
 export const getCreators = async <TSelect extends Prisma.UserSelect>({
@@ -168,17 +178,12 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   excludeIds?: number[];
 }) => {
   const where: Prisma.UserWhereInput = {
-    username: query
-      ? {
-          contains: query,
-          mode: 'insensitive',
-        }
-      : undefined,
+    username: query ? { contains: query } : undefined,
     models: { some: {} },
     id: excludeIds.length ? { notIn: excludeIds } : undefined,
     deletedAt: null,
   };
-  const items = await dbWrite.user.findMany({
+  const items = await dbRead.user.findMany({
     take,
     skip,
     select,
@@ -187,7 +192,7 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   });
 
   if (count) {
-    const count = await dbWrite.user.count({ where });
+    const count = await dbRead.user.count({ where });
     return { items, count };
   }
 
@@ -195,7 +200,7 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
 };
 
 export const getUserUnreadNotificationsCount = ({ id }: { id: number }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id },
     select: {
       _count: {
@@ -234,6 +239,7 @@ export const toggleModelEngagement = async ({
   }
 
   await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
+  if (type === 'Hide') await refreshHiddenModelsForUser({ userId });
   return;
 };
 
@@ -305,6 +311,7 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
+  await refreshHiddenUsersForUser({ userId });
   return;
 };
 
@@ -343,17 +350,40 @@ export const toggleBlockedTag = async ({
 
   if (matchedTag) {
     if (matchedTag.type === 'Hide')
-      return dbWrite.tagEngagement.delete({
+      await dbWrite.tagEngagement.delete({
         where: { userId_tagId: { userId, tagId } },
       });
     else if (matchedTag.type === 'Follow')
-      return dbWrite.tagEngagement.update({
+      await dbWrite.tagEngagement.update({
         where: { userId_tagId: { userId, tagId } },
         data: { type: 'Hide' },
       });
+  } else {
+    await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
   }
+  await refreshAllHiddenForUser({ userId });
+};
 
-  return dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
+export const updateAccountScope = async ({
+  providerAccountId,
+  provider,
+  scope,
+}: {
+  providerAccountId: string;
+  provider: string;
+  scope?: string;
+}) => {
+  if (!scope) return;
+
+  const account = await dbWrite.account.findUnique({
+    where: { provider_providerAccountId: { provider, providerAccountId } },
+    select: { id: true, scope: true },
+  });
+  if (account && !!account.scope) {
+    const currentScope = account.scope.split(' ');
+    const hasNewScope = scope?.split(' ').some((s) => !currentScope.includes(s));
+    if (hasNewScope) await dbWrite.account.update({ where: { id: account.id }, data: { scope } });
+  }
 };
 
 export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
@@ -384,7 +414,7 @@ export const getUserCosmetics = ({
   userId,
   equipped,
 }: GetUserCosmeticsSchema & { userId: number }) => {
-  return dbWrite.user.findUnique({
+  return dbRead.user.findUnique({
     where: { id: userId },
     select: {
       cosmetics: {

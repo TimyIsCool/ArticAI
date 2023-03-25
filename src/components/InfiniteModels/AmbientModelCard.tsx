@@ -13,7 +13,6 @@ import {
   Rating,
   Stack,
   Text,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { ModelStatus } from '@prisma/client';
@@ -31,6 +30,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useState, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
@@ -39,6 +40,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -46,7 +48,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetAll } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { splitUppercase, slugit } from '~/utils/string-helpers';
+import { slugit, getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const mantineColors: DefaultMantineColor[] = [
@@ -70,8 +72,8 @@ const useStyles = createStyles((theme) => {
 
   return {
     card: {
-      height: '300px',
-      background: theme.fn.gradient({ from: base[9], to: background, deg: 180 }),
+      // height: '300px',
+      // background: theme.fn.gradient({ from: base[9], to: background, deg: 180 }),
     },
 
     content: {
@@ -199,7 +201,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
   const modelBadges = (
     <>
       <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
-        {splitUppercase(data.type)}
+        {getDisplayName(data.type)}
       </Badge>
       {data.status !== ModelStatus.Published && (
         <Badge className={cx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
@@ -322,13 +324,12 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
       sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
       <Link href={`/models/${id}/${slugit(name)}`} passHref>
-        <Card
+        <MasonryCard
           ref={ref}
           withBorder
           component="a"
           shadow="sm"
-          className={classes.card}
-          style={{ height: `${height}px` }}
+          height={height}
           p={0}
           onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
             if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
@@ -340,7 +341,6 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
               <ImageGuard
                 images={[image]}
                 connect={{ entityId: id, entityType: 'model' }}
-                nsfw={nsfw ?? image.nsfw} // if the image is nsfw, then most/all of the model is nsfw
                 render={(image) => (
                   <Box sx={{ position: 'relative' }}>
                     {contextMenuItems.length > 0 && (
@@ -395,6 +395,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                     <ImageGuard.Safe>
                       <EdgeImage
                         src={image.url}
+                        name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
                         width={450}
                         placeholder="empty"
@@ -405,51 +406,80 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
                 )}
               />
               <Stack className={classes.info} spacing={8}>
-                {data.user.image && (
-                  <Tooltip
-                    position="left"
-                    label={
-                      <Text size="xs" weight={500}>
-                        {data.user.username}
-                      </Text>
-                    }
-                    offset={5}
-                    radius="lg"
-                    transition="slide-left"
-                    transitionDuration={500}
-                    openDelay={100}
-                    closeDelay={250}
-                    styles={{
-                      tooltip: {
-                        maxWidth: 200,
-                        backgroundColor: 'rgba(0,0,0,.5)',
-                        padding: '1px 10px 2px',
-                        zIndex: 9,
-                      },
+                <Group
+                  mx="xs"
+                  position="apart"
+                  sx={{
+                    zIndex: 10,
+                  }}
+                >
+                  <CivitiaLinkManageButton
+                    modelId={id}
+                    modelName={name}
+                    modelType={data.type}
+                    hashes={data.hashes}
+                    tooltipProps={{
+                      position: 'right',
+                      transition: 'slide-right',
+                      variant: 'smallRounded',
                     }}
-                    multiline
                   >
-                    <Box
-                      mx="xs"
-                      sx={{
-                        alignSelf: 'flex-end',
-                        zIndex: 10,
-                        borderRadius: '50%',
-                      }}
-                      onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        push(`/user/${data.user.username}`);
-                      }}
+                    {({ color, onClick, ref, icon }) => (
+                      <ActionIcon
+                        component="button"
+                        ref={ref}
+                        radius="lg"
+                        variant="filled"
+                        size="lg"
+                        color={color}
+                        sx={(theme) => ({
+                          opacity: 0.8,
+                          boxShadow:
+                            '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
+                          transition: 'opacity .25s ease',
+                          position: 'relative',
+
+                          '&:hover': {
+                            opacity: 1,
+                          },
+                        })}
+                        onClick={onClick}
+                      >
+                        {icon}
+                      </ActionIcon>
+                    )}
+                  </CivitiaLinkManageButton>
+                  {data.user.image && (
+                    <CivitaiTooltip
+                      position="left"
+                      transition="slide-left"
+                      variant="smallRounded"
+                      label={
+                        <Text size="xs" weight={500}>
+                          {data.user.username}
+                        </Text>
+                      }
                     >
-                      <UserAvatar
-                        size="md"
-                        user={data.user}
-                        avatarProps={{ className: classes.userAvatar }}
-                      />
-                    </Box>
-                  </Tooltip>
-                )}
+                      <Box
+                        sx={{
+                          borderRadius: '50%',
+                        }}
+                        onClick={(e: React.MouseEvent<HTMLDivElement>) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          push(`/user/${data.user.username}`);
+                        }}
+                        ml="auto"
+                      >
+                        <UserAvatar
+                          size="md"
+                          user={data.user}
+                          avatarProps={{ className: classes.userAvatar }}
+                        />
+                      </Box>
+                    </CivitaiTooltip>
+                  )}
+                </Group>
 
                 <Stack className={classes.content} spacing={6} p="xs">
                   <Group position="left" spacing={4}>
@@ -467,7 +497,7 @@ export function AmbientModelCard({ data, width: itemWidth }: Props) {
               </Stack>
             </>
           )}
-        </Card>
+        </MasonryCard>
       </Link>
     </Indicator>
   );

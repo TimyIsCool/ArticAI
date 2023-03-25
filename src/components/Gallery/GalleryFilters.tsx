@@ -274,7 +274,7 @@ export function GalleryFilters() {
       </Popover.Target>
       <Popover.Dropdown maw={350} w="100%">
         <Stack spacing={4}>
-          {showNSFWToggle && (
+          {/* {showNSFWToggle && (
             <>
               <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} />
               <SegmentedControl
@@ -300,7 +300,7 @@ export function GalleryFilters() {
                 }}
               />
             </>
-          )}
+          )} */}
           <Divider label="Generation process" labelProps={{ weight: 'bold' }} />
           <Chip.Group
             spacing={4}
@@ -369,21 +369,15 @@ export function GalleryCategories() {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
 
-  const { data: hiddenTags } = trpc.user.getTags.useQuery(
-    { type: 'Hide' },
-    { enabled: !!currentUser }
-  );
-
   const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery(
     {
       entityType: ['Image'],
       sort: TagSort.MostImages,
-      not: hiddenTags?.map((x) => x.id),
       unlisted: false,
       categories: true,
       limit: 100,
     },
-    { enabled: !currentUser || hiddenTags !== undefined }
+    { enabled: !currentUser }
   );
 
   if (!categories.length) return null;

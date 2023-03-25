@@ -15,6 +15,8 @@ import { IconCheck, IconCopy } from '@tabler/icons';
 import { useMemo } from 'react';
 import { encodeMetadata } from '~/utils/image-metadata';
 import { ImageGenerationProcess } from '@prisma/client';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { cloneElement } from 'react';
 
 type Props = {
   meta: ImageMetaProps;
@@ -47,7 +49,7 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
       if (!value) continue;
       const label = labelDictionary[key];
       if (value.length > 30 || key === 'prompt') long.push({ label, value });
-      else if (value.length > 14) medium.push({ label, value });
+      else if (value.length > 14 || key === 'Model') medium.push({ label, value });
       else short.push({ label, value });
     }
     return { long, medium, short };
@@ -55,6 +57,29 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
 
   return (
     <Stack spacing="xs">
+      {/* <DismissibleAlert
+        id="image-reproduction"
+        title="What is this?"
+        getInitialValueInEffect={false}
+        content={
+          <>
+            This is the data used to generate this image.{' '}
+            <Text component="span" weight={500} sx={{ lineHeight: 1.1 }}>
+              The image may not be exactly the same when you generate it.
+            </Text>{' '}
+            <Text
+              component="a"
+              td="underline"
+              variant="link"
+              sx={{ lineHeight: 1.1 }}
+              href="/github/wiki/Image-Reproduction"
+              target="_blank"
+            >
+              Learn why...
+            </Text>
+          </>
+        }
+      /> */}
       {metas.long.map(({ label, value }) => (
         <Stack key={label} spacing={0}>
           <Group spacing={4} align="center">
@@ -116,11 +141,18 @@ export function ImageMetaPopover({
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
   return (
-    <Popover width={350} shadow="md" position="top-end" withArrow withinPortal {...popoverProps}>
-      <Popover.Target>{children}</Popover.Target>
-      <Popover.Dropdown>
-        <ImageMeta meta={meta} generationProcess={generationProcess} />
-      </Popover.Dropdown>
-    </Popover>
+    <div
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
+      <Popover width={350} shadow="md" position="top-end" withArrow withinPortal {...popoverProps}>
+        <Popover.Target>{children}</Popover.Target>
+        <Popover.Dropdown>
+          <ImageMeta meta={meta} generationProcess={generationProcess} />
+        </Popover.Dropdown>
+      </Popover>
+    </div>
   );
 }

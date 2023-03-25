@@ -4,6 +4,7 @@ import { env } from '~/env/server.mjs';
 import {
   createModelHandler,
   deleteModelHandler,
+  getDownloadCommandHandler,
   getModelDetailsForReviewHandler,
   getModelHandler,
   getModelReportDetailsHandler,
@@ -14,14 +15,18 @@ import {
   restoreModelHandler,
   unpublishModelHandler,
   updateModelHandler,
+  upsertModelHandler,
 } from '~/server/controllers/model.controller';
-import { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteModelSchema,
+  GetAllModelsOutput,
   getAllModelsSchema,
+  getDownloadSchema,
   ModelInput,
   modelSchema,
+  modelUpsertSchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -33,6 +38,8 @@ import {
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
+import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
+import { BrowsingMode } from '~/server/common/enums';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -43,7 +50,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   let ownerId = userId;
   if (id) {
     const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbWrite.model.findUnique({ where: { id } }))?.userId ?? 0;
+    ownerId = (await dbRead.model.findUnique({ where: { id } }))?.userId ?? 0;
     if (!isModerator) {
       if (ownerId !== userId) throw throwAuthorizationError();
     }
@@ -79,17 +86,51 @@ const checkFilesExistence = middleware(async ({ input, ctx, next }) => {
   });
 });
 
+const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
+  if (ctx.browsingMode !== BrowsingMode.All) {
+    const _input = input as GetAllModelsOutput;
+    const hidden = await getAllHiddenForUser({ userId: ctx.user?.id });
+    _input.excludedImageTagIds = [
+      ...hidden.tags.moderatedTags,
+      ...hidden.tags.hiddenTags,
+      ...(_input.excludedImageTagIds ?? []),
+    ];
+    _input.excludedTagIds = [...hidden.tags.hiddenTags, ...(_input.excludedTagIds ?? [])];
+    _input.excludedIds = [...hidden.models, ...(_input.excludedIds ?? [])];
+    _input.excludedUserIds = [...hidden.users, ...(_input.excludedUserIds ?? [])];
+    _input.excludedImageIds = [...hidden.images, ...(_input.excludedImageIds ?? [])];
+    if (ctx.browsingMode === BrowsingMode.SFW) {
+      const systemHidden = await getHiddenTagsForUser({ userId: -1 });
+      _input.excludedImageTagIds = [
+        ...systemHidden.moderatedTags,
+        ...systemHidden.hiddenTags,
+        ...(_input.excludedImageTagIds ?? []),
+      ];
+      _input.excludedTagIds = [...systemHidden.hiddenTags, ...(_input.excludedTagIds ?? [])];
+    }
+  }
+
+  return next({
+    ctx: { user: ctx.user },
+  });
+});
+
 export const modelRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
+    .use(applyUserPreferences)
     .query(getModelsInfiniteHandler),
-  getAllPagedSimple: publicProcedure.input(getAllModelsSchema).query(getModelsPagedSimpleHandler),
+  getAllPagedSimple: publicProcedure
+    .input(getAllModelsSchema)
+    .use(applyUserPreferences)
+    .query(getModelsPagedSimpleHandler),
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
   add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
+  upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   update: protectedProcedure
     .input(modelSchema.extend({ id: z.number() }))
     .use(isOwnerOrModerator)
@@ -109,4 +150,5 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .query(getModelDetailsForReviewHandler),
   restore: protectedProcedure.input(getByIdSchema).mutation(restoreModelHandler),
+  getDownloadCommand: protectedProcedure.input(getDownloadSchema).query(getDownloadCommandHandler),
 });
